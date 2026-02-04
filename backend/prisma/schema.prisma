@@ -1,0 +1,272 @@
+// Prisma Schema for ForkScores
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USERS ====================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String?
+  name          String
+  avatarUrl     String?
+  role          UserRole  @default(USER)
+  isVerified    Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // OAuth connections
+  oauthAccounts OAuthAccount[]
+
+  // User's reviews
+  reviews       Review[]
+
+  // User's saved/favorite items
+  favorites     Favorite[]
+
+  // User's helpful votes on reviews
+  helpfulVotes  HelpfulVote[]
+
+  // Restaurant ownership (for restaurant owners)
+  restaurants   Restaurant[]
+
+  // Refresh tokens
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  RESTAURANT_OWNER
+  ADMIN
+}
+
+model OAuthAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  provider     String   // 'google', 'apple'
+  providerId   String   // ID from the OAuth provider
+  accessToken  String?
+  refreshToken String?
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@map("oauth_accounts")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ==================== RESTAURANTS ====================
+
+model Restaurant {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  address     String
+  city        String
+  state       String
+  zipCode     String
+  country     String   @default("USA")
+  latitude    Float?
+  longitude   Float?
+  phone       String?
+  website     String?
+  imageUrl    String?
+  cuisineType String[] // ['Italian', 'Japanese', etc.]
+  priceRange  Int      @default(2) // 1-4 ($, $$, $$$, $$$$)
+  isVerified  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Restaurant owner
+  ownerId     String?
+  owner       User?    @relation(fields: [ownerId], references: [id])
+
+  // Menu categories
+  categories  MenuCategory[]
+
+  // Restaurant hours
+  hours       RestaurantHours[]
+
+  // Aggregate ratings (computed from menu items)
+  avgRating   Float?
+  totalReviews Int     @default(0)
+
+  @@index([city, state])
+  @@index([cuisineType])
+  @@map("restaurants")
+}
+
+model RestaurantHours {
+  id           String   @id @default(cuid())
+  restaurantId String
+  dayOfWeek    Int      // 0 = Sunday, 6 = Saturday
+  openTime     String   // "09:00"
+  closeTime    String   // "22:00"
+  isClosed     Boolean  @default(false)
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, dayOfWeek])
+  @@map("restaurant_hours")
+}
+
+// ==================== MENUS ====================
+
+model MenuCategory {
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String   // 'Appetizers', 'Main Course', 'Desserts', etc.
+  description  String?
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  items      MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  categoryId  String
+  name        String
+  description String?
+  price       Float
+  imageUrl    String?
+  isAvailable Boolean  @default(true)
+  isPopular   Boolean  @default(false)
+  tags        String[] // ['vegetarian', 'spicy', 'gluten-free', etc.]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  // Reviews for this menu item
+  reviews     Review[]
+
+  // Users who favorited this item
+  favorites   Favorite[]
+
+  // Aggregate ratings
+  avgRating       Float?
+  avgTasteRating  Float?
+  avgQualityRating Float?
+  avgValueRating  Float?
+  avgPresentationRating Float?
+  totalReviews    Int    @default(0)
+
+  @@map("menu_items")
+}
+
+// ==================== REVIEWS ====================
+
+model Review {
+  id          String   @id @default(cuid())
+  userId      String
+  menuItemId  String
+  
+  // Overall rating (1-5)
+  rating      Float
+  
+  // Detailed ratings (1-5)
+  tasteRating       Float?
+  qualityRating     Float?
+  valueRating       Float?
+  presentationRating Float?
+  
+  // Review content
+  title       String?
+  content     String
+  
+  // Photos attached to the review
+  photos      ReviewPhoto[]
+  
+  // Helpful votes
+  helpfulVotes HelpfulVote[]
+  helpfulCount Int      @default(0)
+  
+  // Restaurant owner response
+  ownerResponse String?
+  ownerResponseAt DateTime?
+  
+  // Moderation
+  isVisible   Boolean  @default(true)
+  isFlagged   Boolean  @default(false)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuItem  MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, menuItemId]) // One review per user per menu item
+  @@index([menuItemId])
+  @@index([createdAt])
+  @@map("reviews")
+}
+
+model ReviewPhoto {
+  id        String   @id @default(cuid())
+  reviewId  String
+  url       String
+  caption   String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("review_photos")
+}
+
+model HelpfulVote {
+  id        String   @id @default(cuid())
+  userId    String
+  reviewId  String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reviewId])
+  @@map("helpful_votes")
+}
+
+// ==================== FAVORITES ====================
+
+model Favorite {
+  id         String   @id @default(cuid())
+  userId     String
+  menuItemId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, menuItemId])
+  @@map("favorites")
+}
